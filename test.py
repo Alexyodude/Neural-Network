@@ -1,21 +1,29 @@
-import numpy as np
-test = [1, 2, 3, 4, 5]
-test2 = np.array([1, 2, 3, 4, 5])
-test1 = 0
+import signal
+import time
+import readchar
+ 
+res == readchar.readchar()
 
-#function that does a if x is an array and another if it's a number
-def testFunction(x):
-    if isinstance(x, list):
-        print(len(x))
+if res == 'y':
+    print("Yes")
+
+def handler(signum, frame):
+    msg = "Ctrl-c was pressed. Do you really want to exit? y/n "
+    print(msg, end="", flush=True)
+    res = readchar.readchar()
+    if res == 'y':
+        print("")
+        exit(1)
     else:
-        print(x)
-# print(test)
-# print(test2)
-# print(isinstance(test2, (list, np.ndarray)))
-# print(isinstance(test, (list, np.ndarray)))
-# print(isinstance(test1, list))
-
-test3 = np.random.rand(3, 2)
-
-print(test3)
-print(test3[0])
+        print("", end="\r", flush=True)
+        print(" " * len(msg), end="", flush=True) # clear the printed line
+        print("    ", end="\r", flush=True)
+ 
+ 
+signal.signal(signal.SIGINT, handler)
+ 
+count = 0
+while True:
+    print(f"{count}", end="\r", flush=True)
+    count += 1
+    time.sleep(0.1)

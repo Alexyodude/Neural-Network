@@ -1,4 +1,60 @@
 import numpy as np
+import h5py
+import json
+
+import signal
+import readchar
+
+# Save Neural Network Weights and Bias to file
+def save(filename):
+    print("Saving")
+    with open(filename + '.json', 'w') as f:
+        for i in range(1, len(NeuralNetwork.layer)-1):
+            layer = NeuralNetwork.layer[i]
+            layerDict = {}
+            for j in range(len(layer.node)):
+                node = layer.node[j]
+                nodeDict = {"weight": node.weight.tolist(), "bias": node.bias.tolist()}
+                layerDict[j] = nodeDict
+            f.write(json.dumps({"neuralNetwork" : {"layer" : {i : layerDict}, "layerSize" : {i: len(layer.node)}}}))
+        f.write(json.dumps({"learningRate" : BackPropagation.learningRate, "batchSize" : BackPropagation.batchSize}))
+        f.close()
+
+def load(filename, aNeuralNetwork, aBackPropagation):
+    print("Loading")
+    # Load Neural Network Weights and Bias from file
+    with open(filename + '.json', 'r') as f:
+        data = json.load(f)
+        # print(data)
+        for i in range(1, len(aNeuralNetwork.layer)-1):
+            layer = aNeuralNetwork.layer[i]
+            layerDict = data["neuralNetwork"]["layer"][str(i)]
+            print(layerDict)
+            for j in range(len(layer.node)):
+                node = layer.node[j]
+                nodeDict = layerDict[str(j)]
+                node.weight = np.array(nodeDict["weight"])
+                node.bias = np.array(nodeDict["bias"])
+        aBackPropagation.learningRate = data["learningRate"]
+        aBackPropagation.batchSize = data["batchSize"]
+        f.close()
+
+# Save when I press ctrl + c
+def handler(signum, frame):
+    msg = "Ctrl-c was pressed. Do you really want to exit? y/n "
+    print(msg, end="", flush=True)
+    res = readchar.readchar()
+    save("Network")
+    if res == 'y':
+        print("")
+        exit(1)
+    else:
+        print("", end="\r", flush=True)
+        print(" " * len(msg), end="", flush=True) # clear the printed line
+        print("    ", end="\r", flush=True)
+ 
+signal.signal(signal.SIGINT, handler)
+
 
 class Node:
     def __init__(self, weightSize, biasSize, batchSize):
@@ -85,14 +141,21 @@ class NormalizationLayer:
     def decalc(self):
         return np.multiply(self.output, self.averageFactor)
     def function(self, input):
-        assert self.averageFactor != 0, "NormalizationLayer: averageFactor is 0"
-        return np.divide(input, self.averageFactor)
+        # self.averageFactor = np.sum(input)
+        # if self.averageFactor == 0:
+        #     return input
+        # assert self.averageFactor != 0, "NormalizationLayer: averageFactor is 0"
+        return np.divide(input, np.sum(input))
     def calc(self, inputBatch):
         self.output = np.zeros(shape=(len(inputBatch), len(inputBatch[0])))
         for i in range(len(inputBatch)):
-            self.averageFactor = np.sum(inputBatch[i])
-            assert self.averageFactor != 0, "NormalizationLayer: averageFactor is 0"
-            self.output[i] = np.divide(inputBatch[i], self.averageFactor)
+            self.averageFactor = np.sum(np.exp(inputBatch[i]))
+            self.output[i] = np.divide(np.exp(inputBatch[i]), self.averageFactor)
+            # self.averageFactor = np.sum(inputBatch[i])
+            # if self.averageFactor == 0:
+            #     return 0
+            # assert self.averageFactor != 0, "NormalizationLayer: averageFactor is 0"
+            # self.output[i] = np.divide(inputBatch[i], self.averageFactor)
         return self.output
 
 class Functions:
@@ -126,13 +189,15 @@ class BackPropagation:
     def lossSquaredError(self, y):
         return np.square(np.subtract(y,self.yHat))
     def lossCrossEntropy(self, y):
-        return -np.sum(y * np.log(self.yHat))
+        return np.multiply(-self.yHat, np.log(y))
     def train(self, trainingData, trainingLabel, lossFunction):
         self.dLossdOut = np.zeros(self.batchSize)
         self.dOutdZ = np.zeros(self.batchSize)
         self.numberOfEndRescaleLayer = 0
         self.correctTotal = 0
         self.correct = 0
+        self.accuracyHistory = []
+        self.correctHistory = []
         for l in range(0, len(trainingData), self.batchSize):
             self.loss = 0
             self.correct = 0
@@ -145,7 +210,7 @@ class BackPropagation:
             self.neuralNetwork.calc(self.inputBatch)
             for i in range(len(self.neuralNetwork.layer)-1, 1,-1):
                 if self.neuralNetwork.layer[i].name == "NormalizationLayer":
-                    print(self.neuralNetwork.layer[i].output)
+                    print(self.neuralNetwork.layer[i].output, np.sum(self.neuralNetwork.layer[i].output))
                     self.dLossdOutPrevBatch = np.zeros(shape=(self.batchSize, len(self.neuralNetwork.layer[i-1].node)))
                     if len(self.neuralNetwork.layer) - self.numberOfEndRescaleLayer == i:
                         self.numberOfEndRescaleLayer += 1
@@ -162,17 +227,17 @@ class BackPropagation:
                     self.dLossdOutBatch = self.dLossdOutPrevBatch
                 else:
                     self.dLossdOutPrevBatch = np.zeros(shape=(self.batchSize, len(self.neuralNetwork.layer[i-1].node)))
-                    for j in range(len(self.neuralNetwork.layer[i].node)-1, 0,-1):
+                    for j in range(len(self.neuralNetwork.layer[i].node)-1, -1,-1):
                         self.batchWeightGrad = np.zeros(len(self.neuralNetwork.layer[i].node[j].weight))
                         self.batchBiasGrad = np.zeros(len(self.neuralNetwork.layer[i].node[j].bias))
                         for batchIndex in range(self.batchSize):
                             self.biasGrad = np.zeros(len(self.neuralNetwork.layer[i].node[j].bias))
                             self.weightGrad = np.zeros(len(self.neuralNetwork.layer[i].node[j].weight))
-                            if i == len(self.neuralNetwork.layer):
-                                self.yHat = self.targetOutputBatch[batchIndex]
-                                self.dLossdOut = self.derivativeValue(lossFunction, self.neuralNetwork.layer[i].node[j].outputBatch[batchIndex])
-                            else:
-                                self.dLossdOut = self.dLossdOutBatch[batchIndex][j]
+                            # if i == len(self.neuralNetwork.layer):
+                            #     self.yHat = self.targetOutputBatch[batchIndex][j]
+                            #     self.dLossdOut = self.derivativeValue(lossFunction, self.neuralNetwork.layer[i].node[j].outputBatch[batchIndex])
+                            # else:
+                            self.dLossdOut = self.dLossdOutBatch[batchIndex][j]
                             # self.neuralNetwork.layer[i].node[j].outputBatch[batchIndex] is a single node output from the batch
                             # self.neuralNetwork.layer[i].function is the activation function of the node in the layer
                             self.dOutdZ = self.derivativeValue(self.neuralNetwork.layer[i].function, self.neuralNetwork.layer[i].node[j].outputBatch[batchIndex])
@@ -195,9 +260,33 @@ class BackPropagation:
                         self.neuralNetwork.layer[i].node[j].weight = np.subtract(self.neuralNetwork.layer[i].node[j].weight, self.learningRate * self.batchWeightGrad)
                         self.neuralNetwork.layer[i].node[j].bias = np.subtract(self.neuralNetwork.layer[i].node[j].bias, self.learningRate * self.batchBiasGrad)
                     self.dLossdOutBatch = self.dLossdOutPrevBatch
+            self.correctHistory.append(self.correct/self.batchSize)
+            self.accuracyHistory.append(self.correctTotal / (l+self.batchSize+1))
             print("Loss: " + str(self.loss))
             print("Correct: " + str(self.correct / self.batchSize))
-            print("Accuracy: " + str(self.correctTotal / (l+1)))
+            print("Accuracy: " + str(self.correctTotal / (l+self.batchSize+1)))
+            with open('data.json', 'w') as f:
+                json.dump({"correctHistory" : self.correctHistory,
+                           "accuracyHistory" : self.accuracyHistory,
+                           "correct" : self.correct / self.batchSize,
+                            "accuracy" : self.correctTotal / (l+self.batchSize+1),
+                           }, f)
+                
+                # if l%5000 == 0:
+                #     #save weights and biases to json file in the structure neuralNetwork: {layer: {node: {weight: [], bias: []}}, ...}
+                #     for i in range(1, len(self.neuralNetwork.layer)-1):
+                #         layer = self.neuralNetwork.layer[i]
+                #         layerDict = {}
+                #         for j in range(len(layer.node)):
+                #             node = layer.node[j]
+                #             nodeDict = {"weight": node.weight.tolist(), "bias": node.bias.tolist()}
+                #             layerDict[j] = nodeDict
+                #         f.write(json.dumps({"neuralNetwork" : {"layer" : {i : layerDict}, "layerSize" : {i: len(layer.node)}}}))
+                #     f.write(json.dumps({"learningRate" : self.learningRate, "batchSize" : self.batchSize}))
+
+            # saveData = open("saveData.txt", "w")
+            # saveData.write("Correct: " + str(self.correctHistory) + "\n")
+            # saveData.write("Accuracy: " + str(self.accurarcyHistory) + "\n")
         
 
     def derivativeValue(self, function, value):
@@ -218,7 +307,7 @@ def printArrayToAscii(array):
 
 import tensorflow_datasets as tfds
 ds = tfds.load('mnist', split='train', shuffle_files=True)
-ya = ds.take(10000)
+ya = ds.take(30000)
 # split the dataset with image and label
 inputImageData = []
 inputLabelData = []
@@ -231,17 +320,21 @@ for example in ya:
     #printArrayToAscii(image.numpy())
 inputImageData = np.divide(inputImageData, 255)
 
+batchSize = 5
 NeuralNetwork = NeuralNetwork(InputLayer())
-NeuralNetwork.addLayer(Layer(numberOfNodes=392, weightSize=784, biasSize=784, batchSize=5, function=Functions.ReLU))
-NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=392, biasSize=392, batchSize=5, function=Functions.ReLU))
-NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=5, function=Functions.ReLU))
-NeuralNetwork.addLayer(Layer(numberOfNodes=10, weightSize=200, biasSize=200, batchSize=5, function=Functions.ReLU))
-# NeuralNetwork.addLayer(Layer(numberOfNodes=392, weightSize=784, biasSize=784, batchSize=5, function=Functions.ReLU))
-# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=392, biasSize=392, batchSize=5, function=Functions.ReLU))
-# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=5, function=Functions.ReLU))
-# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=5, function=Functions.ReLU))
-# NeuralNetwork.addLayer(Layer(numberOfNodes=10, weightSize=200, biasSize=200, batchSize=5, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=392, weightSize=784, biasSize=784, batchSize=batchSize, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=392, biasSize=392, batchSize=batchSize, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=100, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
+NeuralNetwork.addLayer(Layer(numberOfNodes=10, weightSize=100, biasSize=100, batchSize=batchSize, function=Functions.ReLU))
+# NeuralNetwork.addLayer(Layer(numberOfNodes=392, weightSize=784, biasSize=784, batchSize=batchSize, function=Functions.ReLU))
+# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=392, biasSize=392, batchSize=batchSize, function=Functions.ReLU))
+# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
+# NeuralNetwork.addLayer(Layer(numberOfNodes=200, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
+# NeuralNetwork.addLayer(Layer(numberOfNodes=10, weightSize=200, biasSize=200, batchSize=batchSize, function=Functions.ReLU))
 NeuralNetwork.addLayer(NormalizationLayer())
 NeuralNetwork.randomize()
-BackPropagation = BackPropagation(NeuralNetwork, learningRate=0.1, batchSize=5)
+BackPropagation = BackPropagation(NeuralNetwork, learningRate=0.1, batchSize=batchSize)
+# load("Network", NeuralNetwork, BackPropagation)
 BackPropagation.train(trainingData=inputImageData, trainingLabel=inputLabelData, lossFunction=BackPropagation.lossSquaredError)
